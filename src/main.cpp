@@ -165,6 +165,7 @@ int main(int argc, char *argv[])
     poolContext.UserMgr->setBaseCfg(config.PoolName,
                                     config.PoolHostProtocol,
                                     config.PoolHostAddress,
+                                    config.SmtpSenderAddress,
                                     config.PoolActivateLinkPrefix,
                                     config.PoolChangePasswordLinkPrefix,
                                     config.PoolActivate2faLinkPrefix,
