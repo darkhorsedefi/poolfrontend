@@ -46,11 +46,7 @@ std::unordered_map<std::string, std::pair<int, PoolHttpConnection::FunctionTy>> 
   // Instance functions
   {"instanceEnumerateAll", {hmPost, fnInstanceEnumerateAll}},
   // Complex mining stats functions
-  {"complexMiningStatsGetInfo", {hmPost, fnComplexMiningStatsGetInfo}},
-
-  // Extended API
-  {"backendQueryExtendedPoolStats", {hmPost, fnBackendQueryExtendedPoolStats}},
-  {"backendQueryNetworkStats", {hmPost, fnBackendQueryNetworkStats}}
+  {"complexMiningStatsGetInfo", {hmPost, fnComplexMiningStatsGetInfo}}
 };
 
 static inline bool rawcmp(Raw data, const char *operand) {
