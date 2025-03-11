@@ -13,9 +13,6 @@ set (CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH}
   ${CMAKE_CURRENT_SOURCE_DIR}/cmake
 )
 
-find_package(CURL REQUIRED)
-target_link_libraries(poolfrontend PRIVATE CURL::libcurl)
-
 add_definitions(-DTBB_USE_EXCEPTIONS=0)
 
 if(MSVC)

@@ -6,8 +6,6 @@
 #include "loguru.hpp"
 #include "rapidjson/document.h"
 #include "poolcommon/jsonSerializer.h"
-#include <iostream>
-#include <curl/curl.h>
 
 std::unordered_map<std::string, std::pair<int, PoolHttpConnection::FunctionTy>> PoolHttpConnection::FunctionNameMap_ = {
   // User manager functions
@@ -50,6 +48,7 @@ std::unordered_map<std::string, std::pair<int, PoolHttpConnection::FunctionTy>> 
   // Complex mining stats functions
   {"complexMiningStatsGetInfo", {hmPost, fnComplexMiningStatsGetInfo}},
 
+  // Extended API
   {"backendQueryExtendedPoolStats", {hmPost, fnBackendQueryExtendedPoolStats}},
   {"backendQueryNetworkStats", {hmPost, fnBackendQueryNetworkStats}}
 };
@@ -150,149 +149,6 @@ static inline void jsonParseNumber(rapidjson::Value &document, const char *name,
   } else {
     *out = defaultValue;
   }
-}
-
-// Structure to hold network stats
-struct NetworkStats {
-  int currentBlockHeight;
-  double currentDifficulty;
-  double networkHashRate;
-  double expectedTimePerBlock; // in seconds
-};
-
-// Callback function to accumulate the HTTP response into a std::string
-static size_t WriteCallback(void *contents, size_t size, size_t nmemb, void *userp) {
-  size_t totalSize = size * nmemb;
-  std::string* str = static_cast<std::string*>(userp);
-  str->append(static_cast<char*>(contents), totalSize);
-  return totalSize;
-}
-
-// Updated function to query network stats from the coin daemon,
-// pulling rpcUrl, rpcUser, and rpcPass from the pool configuration (RapidJSON Document)
-// and calculating expectedTimePerBlock based on the retrieved difficulty and network hash rate.
-NetworkStats getNetworkStatsFromDaemon(const rapidjson::Document &config, const std::string &coinName) {
-  NetworkStats stats = {0, 0.0, 0.0, 0.0};
-
-  // Locate the coin configuration in the "coins" array.
-  if (!config.HasMember("coins") || !config["coins"].IsArray()) {
-      std::cerr << "Config error: 'coins' not found or not an array." << std::endl;
-      return stats;
-  }
-  
-  const rapidjson::Value &coins = config["coins"];
-  const rapidjson::Value *targetCoin = nullptr;
-  for (const auto &coin : coins.GetArray()) {
-      if (coin.HasMember("name") && coin["name"].IsString() &&
-          coin["name"].GetString() == coinName) {
-          targetCoin = &coin;
-          break;
-      }
-  }
-  
-  if (!targetCoin) {
-      std::cerr << "Coin " << coinName << " not found in configuration." << std::endl;
-      return stats;
-  }
-  
-  // Get RPC node details from "RPCNodes" (we use the first available node)
-  if (!targetCoin->HasMember("RPCNodes") || !(*targetCoin)["RPCNodes"].IsArray()) {
-      std::cerr << "RPCNodes not found for coin " << coinName << "." << std::endl;
-      return stats;
-  }
-  
-  const rapidjson::Value &rpcNodes = (*targetCoin)["RPCNodes"];
-  if (rpcNodes.Size() == 0) {
-      std::cerr << "No RPCNodes available for coin " << coinName << "." << std::endl;
-      return stats;
-  }
-  
-  const rapidjson::Value &node = rpcNodes[0];
-  if (!node.HasMember("address") || !node.HasMember("login") || !node.HasMember("password")) {
-      std::cerr << "Incomplete RPC node configuration for coin " << coinName << "." << std::endl;
-      return stats;
-  }
-  
-  std::string address  = node["address"].GetString(); // e.g., "127.0.0.1:9332"
-  std::string rpcUser  = node["login"].GetString();
-  std::string rpcPass  = node["password"].GetString();
-  
-  // Build the RPC URL. For Bitcoin-like RPC endpoints, prefix with "http://"
-  std::string rpcUrl = "http://" + address + "/";
-
-  // First RPC call: getblockchaininfo to retrieve block height and difficulty.
-  std::string requestBlockchainInfo = "{\"jsonrpc\":\"1.0\",\"id\":\"curltest\",\"method\":\"getblockchaininfo\",\"params\":[]}";
-  
-  CURL *curl = curl_easy_init();
-  if (curl) {
-      std::string readBuffer;
-      
-      curl_easy_setopt(curl, CURLOPT_URL, rpcUrl.c_str());
-      curl_easy_setopt(curl, CURLOPT_POSTFIELDS, requestBlockchainInfo.c_str());
-      curl_easy_setopt(curl, CURLOPT_USERNAME, rpcUser.c_str());
-      curl_easy_setopt(curl, CURLOPT_PASSWORD, rpcPass.c_str());
-      curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteCallback);
-      curl_easy_setopt(curl, CURLOPT_WRITEDATA, &readBuffer);
-      
-      CURLcode res = curl_easy_perform(curl);
-      if (res != CURLE_OK) {
-          std::cerr << "getblockchaininfo RPC call failed: " << curl_easy_strerror(res) << std::endl;
-      } else {
-          // Parse the JSON response
-          rapidjson::Document doc;
-          doc.Parse(readBuffer.c_str());
-          if (!doc.HasParseError() && doc.HasMember("result")) {
-              const rapidjson::Value &result = doc["result"];
-              if (result.HasMember("blocks") && result["blocks"].IsInt())
-                  stats.currentBlockHeight = result["blocks"].GetInt();
-              if (result.HasMember("difficulty") && result["difficulty"].IsDouble())
-                  stats.currentDifficulty = result["difficulty"].GetDouble();
-          } else {
-              std::cerr << "Invalid JSON response from getblockchaininfo RPC." << std::endl;
-          }
-      }
-      curl_easy_cleanup(curl);
-  }
-  
-  // Second RPC call: getnetworkhashps to retrieve the network hash rate.
-  std::string requestNetworkHashps = "{\"jsonrpc\":\"1.0\",\"id\":\"curltest\",\"method\":\"getnetworkhashps\",\"params\":[]}";
-  
-  CURL *curl2 = curl_easy_init();
-  if (curl2) {
-      std::string readBuffer2;
-      
-      curl_easy_setopt(curl2, CURLOPT_URL, rpcUrl.c_str());
-      curl_easy_setopt(curl2, CURLOPT_POSTFIELDS, requestNetworkHashps.c_str());
-      curl_easy_setopt(curl2, CURLOPT_USERNAME, rpcUser.c_str());
-      curl_easy_setopt(curl2, CURLOPT_PASSWORD, rpcPass.c_str());
-      curl_easy_setopt(curl2, CURLOPT_WRITEFUNCTION, WriteCallback);
-      curl_easy_setopt(curl2, CURLOPT_WRITEDATA, &readBuffer2);
-      
-      CURLcode res2 = curl_easy_perform(curl2);
-      if (res2 != CURLE_OK) {
-          std::cerr << "getnetworkhashps RPC call failed: " << curl_easy_strerror(res2) << std::endl;
-      } else {
-          rapidjson::Document doc2;
-          doc2.Parse(readBuffer2.c_str());
-          if (!doc2.HasParseError() && doc2.HasMember("result") && doc2["result"].IsDouble()) {
-              stats.networkHashRate = doc2["result"].GetDouble();
-          } else {
-              std::cerr << "Invalid JSON response from getnetworkhashps RPC." << std::endl;
-          }
-      }
-      curl_easy_cleanup(curl2);
-  }
-  
-  // Calculate expected time per block using the formula:
-  // expectedTimePerBlock = difficulty * 2^32 / networkHashRate
-  // 2^32 is 4294967296.
-  if (stats.networkHashRate > 0) {
-      stats.expectedTimePerBlock = (stats.currentDifficulty * 4294967296.0) / stats.networkHashRate;
-  } else {
-      stats.expectedTimePerBlock = 0.0;
-  }
-  
-  return stats;
 }
 
 static inline void parseUserCredentials(rapidjson::Value &document, UserManager::Credentials &credentials, bool *validAcc)
@@ -2091,30 +1947,30 @@ void PoolHttpConnection::onBackendQueryExtendedPoolStats(rapidjson::Document &do
 }
 
 void PoolHttpConnection::onBackendQueryNetworkStats(rapidjson::Document &document) {
-  // Assume that your pool configuration is loaded in a global (or member) RapidJSON Document.
-  extern rapidjson::Document g_poolConfig; // Replace with your actual config instance
-
-  // Retrieve network stats for the desired coin, e.g., "LTC"
-  NetworkStats stats = getNetworkStatsFromDaemon(g_poolConfig, "LTC");
+  // Optionally, you could parse parameters if needed.
+  bool validAcc = true;
+  // For this demo, we use dummy data. Replace these with your real network data:
+  double networkHashRate = 200.00;  // e.g., in EH/s
+  int expectedTimePerBlock = 600;     // seconds
+  int currentBlockHeight = 680000;
+  uint64_t currentDifficulty = 1800000000000ULL;
+  uint64_t nextDifficultyEstimate = 1850000000000ULL;
+  int timeToRetarget = 3600;          // seconds
 
   // Build the JSON response.
   xmstream stream;
   reply200(stream);
   size_t offset = startChunk(stream);
   {
-      JSON::Object response(stream);
-      response.addString("status", "ok");
-      response.addString("networkHashRate", std::to_string(stats.networkHashRate) + " H/s");
-      response.addDouble("expectedTimePerBlock", stats.expectedTimePerBlock);
-      response.addInt("currentBlockHeight", stats.currentBlockHeight);
-      response.addString("currentDifficulty", std::to_string(stats.currentDifficulty));
-      // For nextDifficultyEstimate and timeToRetarget, add additional logic if available.
-      response.addString("nextDifficultyEstimate", "0");
-      response.addInt("timeToRetarget", 0);
+    JSON::Object response(stream);
+    response.addString("status", "ok");
+    response.addString("networkHashRate", std::to_string(networkHashRate) + " EH/s");
+    response.addInt("expectedTimePerBlock", expectedTimePerBlock);
+    response.addInt("currentBlockHeight", currentBlockHeight);
+    response.addString("currentDifficulty", std::to_string(currentDifficulty));
+    response.addString("nextDifficultyEstimate", std::to_string(nextDifficultyEstimate));
+    response.addInt("timeToRetarget", timeToRetarget);
   }
   finishChunk(stream, offset);
   aioWrite(Socket_, stream.data(), stream.sizeOf(), afWaitAll, 0, writeCb, this);
 }
-
-
-
