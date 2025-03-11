@@ -6,6 +6,7 @@
 #include "loguru.hpp"
 #include "rapidjson/document.h"
 #include "poolcommon/jsonSerializer.h"
+#include <iostream>
 
 std::unordered_map<std::string, std::pair<int, PoolHttpConnection::FunctionTy>> PoolHttpConnection::FunctionNameMap_ = {
   // User manager functions
