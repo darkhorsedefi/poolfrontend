@@ -118,7 +118,10 @@ private:
     fnInstanceEnumerateAll,
 
     // Complex mining stats functions
-    fnComplexMiningStatsGetInfo
+    fnComplexMiningStatsGetInfo,
+
+    fnBackendQueryExtendedPoolStats,
+    fnBackendQueryNetworkStats
   };
 
   static std::unordered_map<std::string, std::pair<int, PoolHttpConnection::FunctionTy>> FunctionNameMap_;

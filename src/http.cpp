@@ -46,7 +46,10 @@ std::unordered_map<std::string, std::pair<int, PoolHttpConnection::FunctionTy>> 
   // Instance functions
   {"instanceEnumerateAll", {hmPost, fnInstanceEnumerateAll}},
   // Complex mining stats functions
-  {"complexMiningStatsGetInfo", {hmPost, fnComplexMiningStatsGetInfo}}
+  {"complexMiningStatsGetInfo", {hmPost, fnComplexMiningStatsGetInfo}},
+
+  {"backendQueryExtendedPoolStats", {hmPost, fnBackendQueryExtendedPoolStats}},
+  {"backendQueryNetworkStats", {hmPost, fnBackendQueryNetworkStats}}
 };
 
 static inline bool rawcmp(Raw data, const char *operand) {
@@ -1886,3 +1889,86 @@ void PoolHttpConnection::replyWithStatus(const char *status)
   finishChunk(stream, offset);
   aioWrite(Socket_, stream.data(), stream.sizeOf(), afWaitAll, 0, writeCb, this);
 }
+
+void PoolHttpConnection::onBackendQueryExtendedPoolStats(rapidjson::Document &document) {
+  // Optionally, parse the coin parameter
+  std::string coin;
+  bool validAcc = true;
+  jsonParseString(document, "coin", coin, "", &validAcc);
+  if (!validAcc) {
+    replyWithStatus("json_format_error");
+    return;
+  }
+
+  // Retrieve the backend for the given coin.
+  // (Assumes a single backend per coin; adjust if your design differs.)
+  PoolBackend *backend = Server_.backend(coin);
+  if (!backend) {
+    replyWithStatus("invalid_coin");
+    return;
+  }
+
+  // Dummy values for demonstration purposes.
+  // Replace these with real calculations, e.g. from StatisticDb or AccountingDb.
+  double poolHashRate = 123.45; // e.g., in GH/s
+  int activeUsers = 42;
+  int activeWorkers = 128;
+  double meanShareEfficiency = 0.95;
+  double medianShareEfficiency = 0.96;
+  double totalWorkDone = 67890.12; // aggregated work value
+  int totalBlocksFound = 150;
+  double totalPaidOut = 1234.56;
+  int expectedBlockTime = 600; // seconds
+  int timeSinceLastBlock = 120; // seconds
+
+  // Build the JSON response.
+  xmstream stream;
+  reply200(stream);
+  size_t offset = startChunk(stream);
+  {
+    JSON::Object response(stream);
+    response.addString("status", "ok");
+    response.addString("poolHashRate", std::to_string(poolHashRate) + " GH/s");
+    response.addInt("activeUsers", activeUsers);
+    response.addInt("activeWorkers", activeWorkers);
+    response.addDouble("meanShareEfficiency", meanShareEfficiency);
+    response.addDouble("medianShareEfficiency", medianShareEfficiency);
+    response.addString("totalWorkDone", std::to_string(totalWorkDone));
+    response.addInt("totalBlocksFound", totalBlocksFound);
+    response.addString("totalPaidOut", std::to_string(totalPaidOut));
+    response.addInt("expectedBlockTime", expectedBlockTime);
+    response.addInt("timeSinceLastBlock", timeSinceLastBlock);
+  }
+  finishChunk(stream, offset);
+  aioWrite(Socket_, stream.data(), stream.sizeOf(), afWaitAll, 0, writeCb, this);
+}
+
+void PoolHttpConnection::onBackendQueryNetworkStats(rapidjson::Document &document) {
+  // Optionally, you could parse parameters if needed.
+  bool validAcc = true;
+  // For this demo, we use dummy data. Replace these with your real network data:
+  double networkHashRate = 200.00;  // e.g., in EH/s
+  int expectedTimePerBlock = 600;     // seconds
+  int currentBlockHeight = 680000;
+  uint64_t currentDifficulty = 1800000000000ULL;
+  uint64_t nextDifficultyEstimate = 1850000000000ULL;
+  int timeToRetarget = 3600;          // seconds
+
+  // Build the JSON response.
+  xmstream stream;
+  reply200(stream);
+  size_t offset = startChunk(stream);
+  {
+    JSON::Object response(stream);
+    response.addString("status", "ok");
+    response.addString("networkHashRate", std::to_string(networkHashRate) + " EH/s");
+    response.addInt("expectedTimePerBlock", expectedTimePerBlock);
+    response.addInt("currentBlockHeight", currentBlockHeight);
+    response.addString("currentDifficulty", std::to_string(currentDifficulty));
+    response.addString("nextDifficultyEstimate", std::to_string(nextDifficultyEstimate));
+    response.addInt("timeToRetarget", timeToRetarget);
+  }
+  finishChunk(stream, offset);
+  aioWrite(Socket_, stream.data(), stream.sizeOf(), afWaitAll, 0, writeCb, this);
+}
+
