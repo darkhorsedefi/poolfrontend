@@ -1791,7 +1791,7 @@ void PoolHttpConnection::onComplexMiningStatsGetInfo(rapidjson::Document &docume
     objectDecrementReference(aioObjectHandle(Socket_), 1);
   });
 }
-
+/*
 void PoolHttpConnection::onBackendQueryPoolStatsExtended(rapidjson::Document &document) {
   // Create a response with extra pool stats.
   xmstream stream;
@@ -1839,6 +1839,152 @@ void PoolHttpConnection::onNetworkQueryStats(rapidjson::Document &document) {
   finishChunk(stream, offset);
   aioWrite(Socket_, stream.data(), stream.sizeOf(), afWaitAll, 0, writeCb, this);
 }
+*/
+// Structure for aggregating pool statistics from multiple backends.
+struct AggregatedPoolStats {
+  double poolHashRate = 0.0;        // Sum of AveragePower from all backends.
+  int activeUsers = 0;              // Sum of ClientsNum.
+  int activeWorkers = 0;            // Sum of WorkersNum.
+  std::vector<double> efficiencies; // One efficiency value per backend.
+  double totalWorkDone = 0.0;       // Aggregated from accountingDb.
+  int totalBlocksFound = 0;         // Aggregated from accountingDb.
+  double totalPaidOut = 0.0;        // Aggregated from accountingDb.
+  double expectedBlockTime = 0.0;   // For simplicity, we take the value from one backend.
+  int timeSinceLastBlock = 0;       // Likewise.
+};
+
+// Structure to hold network statistics.
+struct NetworkStats {
+  double networkHashRate;
+  double expectedTimePerBlock;
+  int currentBlockHeight;
+  double currentDifficulty;
+  double nextDifficultyEstimate;
+  int timeToRetarget;
+};
+
+void PoolHttpConnection::onBackendQueryPoolStatsExtended(rapidjson::Document &document) {
+  // Aggregate extended pool stats across all backends.
+  auto &backends = Server_.backends();
+  size_t totalBackends = backends.size();
+  if (totalBackends == 0) {
+    replyWithStatus("no_backends");
+    return;
+  }
+
+  // Create a shared aggregated structure and a counter.
+  auto aggregated = std::make_shared<AggregatedPoolStats>();
+  auto counter = std::make_shared<std::atomic<size_t>>(0);
+
+  // For each backend, query the current statistic.
+  for (auto backend : backends) {
+    StatisticDb *statistic = backend->statisticDb();
+    statistic->queryPoolStats([this, aggregated, counter, totalBackends, backend](const StatisticDb::CStats &record) {
+      // Use AveragePower as the coin hash rate.
+      aggregated->poolHashRate += record.AveragePower;
+      aggregated->activeUsers += record.ClientsNum;
+      aggregated->activeWorkers += record.WorkersNum;
+
+      // Calculate a simple efficiency measure: if SharesPerSecond > 0,
+      // assume efficiency = (SharesWork / SharesPerSecond)*100.
+      double efficiency = 0.0;
+      if (record.SharesPerSecond > 0)
+        efficiency = (record.SharesWork / record.SharesPerSecond) * 100.0;
+      aggregated->efficiencies.push_back(efficiency);
+
+      // Retrieve additional accounting info.
+      // (Assuming these methods exist and return synchronous values.)
+      aggregated->totalWorkDone += backend->accountingDb()->getTotalWorkDone();
+      aggregated->totalBlocksFound += backend->accountingDb()->getTotalBlocksFound();
+      aggregated->totalPaidOut += backend->accountingDb()->getTotalPaidOut();
+
+      // For expectedBlockTime and timeSinceLastBlock, assume they are the same
+      // for all backends; we take the value from the first backend.
+      if (aggregated->expectedBlockTime == 0.0) {
+        aggregated->expectedBlockTime = backend->accountingDb()->getExpectedBlockTime();
+        aggregated->timeSinceLastBlock = backend->accountingDb()->getTimeSinceLastBlock();
+      }
+
+      // Increment counter and check if all backends have responded.
+      size_t done = ++(*counter);
+      if (done == totalBackends) {
+        // Compute mean efficiency.
+        double meanEfficiency = 0.0;
+        for (double eff : aggregated->efficiencies)
+          meanEfficiency += eff;
+        if (!aggregated->efficiencies.empty())
+          meanEfficiency /= aggregated->efficiencies.size();
+
+        // Compute median efficiency.
+        std::sort(aggregated->efficiencies.begin(), aggregated->efficiencies.end());
+        double medianEfficiency = 0.0;
+        size_t n = aggregated->efficiencies.size();
+        if (n > 0) {
+          if (n % 2 == 0)
+            medianEfficiency = (aggregated->efficiencies[n/2 - 1] + aggregated->efficiencies[n/2]) / 2.0;
+          else
+            medianEfficiency = aggregated->efficiencies[n/2];
+        }
+
+        // Build and send the JSON response.
+        xmstream stream;
+        reply200(stream);
+        size_t offset = startChunk(stream);
+        {
+          JSON::Object obj(stream);
+          obj.addString("status", "ok");
+          obj.addDouble("poolHashRate", aggregated->poolHashRate);
+          obj.addInt("activeUsers", aggregated->activeUsers);
+          obj.addInt("activeWorkers", aggregated->activeWorkers);
+          obj.addDouble("meanShareEfficiency", meanEfficiency);
+          obj.addDouble("medianShareEfficiency", medianEfficiency);
+          obj.addDouble("totalWorkDone", aggregated->totalWorkDone);
+          obj.addInt("totalBlocksFound", aggregated->totalBlocksFound);
+          obj.addDouble("totalPaidOut", aggregated->totalPaidOut);
+          obj.addDouble("expectedBlockTime", aggregated->expectedBlockTime);
+          obj.addInt("timeSinceLastBlock", aggregated->timeSinceLastBlock);
+        }
+        finishChunk(stream, offset);
+        aioWrite(Socket_, stream.data(), stream.sizeOf(), afWaitAll, 0, writeCb, this);
+      }
+    });
+  }
+}
+
+void PoolHttpConnection::onNetworkQueryStats(rapidjson::Document &document) {
+  // For network stats, select the first available backend.
+  if (Server_.backends().empty()) {
+    replyWithStatus("no_backend");
+    return;
+  }
+  PoolBackend* backend = Server_.backends()[0];
+  
+  // Assume that your PoolBackend (or its RPC client) has a synchronous method:
+  // bool getNetworkStats(NetworkStats &stats);
+  NetworkStats stats;
+  if (!backend->getNetworkStats(stats)) {
+    replyWithStatus("error_fetching_network_stats");
+    return;
+  }
+  
+  // Build the JSON response with the real network stats.
+  xmstream stream;
+  reply200(stream);
+  size_t offset = startChunk(stream);
+  {
+    JSON::Object obj(stream);
+    obj.addString("status", "ok");
+    obj.addDouble("networkHashRate", stats.networkHashRate);
+    obj.addDouble("expectedTimePerBlock", stats.expectedTimePerBlock);
+    obj.addInt("currentBlockHeight", stats.currentBlockHeight);
+    obj.addDouble("currentDifficulty", stats.currentDifficulty);
+    obj.addDouble("nextDifficultyEstimate", stats.nextDifficultyEstimate);
+    obj.addInt("timeToRetarget", stats.timeToRetarget);
+  }
+  finishChunk(stream, offset);
+  aioWrite(Socket_, stream.data(), stream.sizeOf(), afWaitAll, 0, writeCb, this);
+}
+
 
 PoolHttpServer::PoolHttpServer(uint16_t port,
                                UserManager &userMgr,
