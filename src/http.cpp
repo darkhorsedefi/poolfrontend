@@ -273,6 +273,8 @@ int PoolHttpConnection::onParse(HttpRequestComponent *component)
       case fnBackendPoolLuck : onBackendPoolLuck(document); break;
       case fnInstanceEnumerateAll : onInstanceEnumerateAll(document); break;
       case fnComplexMiningStatsGetInfo : onComplexMiningStatsGetInfo(document); break;
+      case fnBackendQueryExtendedPoolStats : onBackendQueryExtendedPoolStats(document); break;
+      case fnBackendQueryNetworkStats : onBackendQueryNetworkStats(document); break;
       default:
         reply404();
         return 0;
