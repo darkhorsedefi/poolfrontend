@@ -46,7 +46,11 @@ std::unordered_map<std::string, std::pair<int, PoolHttpConnection::FunctionTy>> 
   // Instance functions
   {"instanceEnumerateAll", {hmPost, fnInstanceEnumerateAll}},
   // Complex mining stats functions
-  {"complexMiningStatsGetInfo", {hmPost, fnComplexMiningStatsGetInfo}}
+  {"complexMiningStatsGetInfo", {hmPost, fnComplexMiningStatsGetInfo}},
+
+  // New endpoints:
+  {"backendQueryPoolStatsExtended", {hmPost, fnBackendQueryPoolStatsExtended}},
+  {"networkQueryStats", {hmPost, fnNetworkQueryStats}}
 };
 
 static inline bool rawcmp(Raw data, const char *operand) {
@@ -270,6 +274,8 @@ int PoolHttpConnection::onParse(HttpRequestComponent *component)
       case fnBackendPoolLuck : onBackendPoolLuck(document); break;
       case fnInstanceEnumerateAll : onInstanceEnumerateAll(document); break;
       case fnComplexMiningStatsGetInfo : onComplexMiningStatsGetInfo(document); break;
+      case fnBackendQueryPoolStatsExtended : onBackendQueryPoolStatsExtended(document); break;
+      case fnNetworkQueryStats : onNetworkQueryStats(document); break;
       default:
         reply404();
         return 0;
@@ -1784,6 +1790,54 @@ void PoolHttpConnection::onComplexMiningStatsGetInfo(rapidjson::Document &docume
     aioWrite(Socket_, stream.data(), stream.sizeOf(), afWaitAll, 0, writeCb, this);
     objectDecrementReference(aioObjectHandle(Socket_), 1);
   });
+}
+
+void PoolHttpConnection::onBackendQueryPoolStatsExtended(rapidjson::Document &document) {
+  // Create a response with extra pool stats.
+  xmstream stream;
+  reply200(stream);
+  size_t offset = startChunk(stream);
+
+  {
+    JSON::Object obj(stream);
+    obj.addString("status", "ok");
+    // Extended pool stats – these are placeholder values:
+    obj.addDouble("poolHashRate", 123456.78);     // e.g. total hash rate in hash/s
+    obj.addInt("activeUsers", 42);                // number of active users
+    obj.addInt("activeWorkers", 128);             // number of active workers
+    obj.addDouble("meanShareEfficiency", 95.5);     // percent
+    obj.addDouble("medianShareEfficiency", 97.0);   // percent
+    obj.addDouble("totalWorkDone", 987654321.0);    // cumulative work
+    obj.addInt("totalBlocksFound", 123);          // total blocks found
+    obj.addDouble("totalPaidOut", 456789.0);        // total coins paid out
+    obj.addDouble("expectedBlockTime", 3600.0);     // expected time (seconds) to mine a block
+    obj.addInt("timeSinceLastBlock", 300);          // time (seconds) since the last block was found
+  }
+
+  finishChunk(stream, offset);
+  aioWrite(Socket_, stream.data(), stream.sizeOf(), afWaitAll, 0, writeCb, this);
+}
+
+void PoolHttpConnection::onNetworkQueryStats(rapidjson::Document &document) {
+  // Create a response with network stats.
+  xmstream stream;
+  reply200(stream);
+  size_t offset = startChunk(stream);
+
+  {
+    JSON::Object obj(stream);
+    obj.addString("status", "ok");
+    // Dummy network stats – replace with actual data from RPC or estimation functions:
+    obj.addDouble("networkHashRate", 234567.89);       // network hash rate
+    obj.addDouble("expectedTimePerBlock", 600.0);        // expected block time in seconds
+    obj.addInt("currentBlockHeight", 654321);          // current block height
+    obj.addDouble("currentDifficulty", 1234567.0);       // current difficulty
+    obj.addDouble("nextDifficultyEstimate", 1300000.0);  // next difficulty estimate
+    obj.addInt("timeToRetarget", 1200);                 // time (seconds) to next retarget
+  }
+
+  finishChunk(stream, offset);
+  aioWrite(Socket_, stream.data(), stream.sizeOf(), afWaitAll, 0, writeCb, this);
 }
 
 PoolHttpServer::PoolHttpServer(uint16_t port,
