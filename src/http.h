@@ -70,9 +70,6 @@ private:
 
   void onComplexMiningStatsGetInfo(rapidjson::Document &document);
 
-  void onBackendQueryExtendedPoolStats(rapidjson::Document &document);
-  void onBackendQueryNetworkStats(rapidjson::Document &document);
-
   void queryStatsHistory(StatisticDb *statistic, const std::string &login, const std::string &worker, int64_t timeFrom, int64_t timeTo, int64_t groupByInterval, int64_t currentTime);
   void replyWithStatus(const char *status);
 
